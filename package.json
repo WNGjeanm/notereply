@@ -1,0 +1,30 @@
+{
+  "name": "notereply",
+  "version": "0.1.14",
+  "private": true,
+  "description": "笔答 NoteReply：在 Obsidian 中与笔记、文件和图片对话，并将回答写回 Markdown。",
+  "main": "main.js",
+  "scripts": {
+    "build": "node build.cjs",
+    "test": "node --test test/core.test.cjs test/plugin.test.cjs test/blocks.test.cjs test/links.test.cjs test/mentions.test.cjs test/mention-input.test.cjs test/transport.test.cjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12"
+  },
+  "dependencies": {
+    "mammoth": "1.11.0",
+    "pako": "1.0.11",
+    "pdfjs-dist": "4.10.38"
+  },
+  "license": "MIT",
+  "author": "JEANMK",
+  "packageManager": "pnpm@11.25.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/WNGjeanm/notereply.git"
+  },
+  "bugs": {
+    "url": "https://github.com/WNGjeanm/notereply/issues"
+  },
+  "homepage": "https://github.com/WNGjeanm/notereply#readme"
+}
