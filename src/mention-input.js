@@ -1,4 +1,4 @@
-const {AbstractInputSuggest}=require('obsidian');
+const {AbstractInputSuggest,setIcon}=require('obsidian');
 const {mentionsIn,mentionContext,atomicRange,rankFiles}=require('./mentions');
 function chip(doc,path){const node=doc.createElement('span');node.className='jm-file-mention';node.contentEditable='false';node.dataset.filePath=path;node.textContent='@'+path.split('/').pop();node.title=path;return node;}
 function renderMentionText(root,text){root.replaceChildren();let at=0;for(const m of mentionsIn(text)){root.appendChild(root.ownerDocument.createTextNode(text.slice(at,m.from)));root.appendChild(chip(root.ownerDocument,m.path));at=m.to;}root.appendChild(root.ownerDocument.createTextNode(text.slice(at)));}
@@ -23,9 +23,19 @@ function pointAt(root,offset){
  }return {node:root,offset:root.childNodes.length};
 }
 class FileMentionSuggest extends AbstractInputSuggest{
- constructor(owner,editor){super(owner.app,editor.el);this.editor=editor;this.limit=30;}
+ constructor(owner,editor){super(owner.app,editor.el);this.editor=editor;this.limit=30;
+  if(this.suggestEl){this.suggestEl.classList.add('jm-file-suggest');const doc=editor.el.ownerDocument,head=doc.createElement('div');head.className='jm-file-suggest-head';head.textContent='引用文件';this.suggestEl.prepend(head);}
+ }
+ open(){const menu=this.suggestEl,input=this.editor.el,rect=input.getBoundingClientRect?.();if(menu&&rect){const win=input.ownerDocument.defaultView;const width=Math.min(480,rect.width,win.innerWidth-24);menu.style.setProperty('--jm-mention-width',Math.max(0,width)+'px');}super.open();}
  getSuggestions(){if(this.editor.composing)return [];const context=this.editor.context();if(!context)return [];return rankFiles(this.app.vault.getFiles?.()||[],context.query,this.app.vault.configDir);}
- renderSuggestion(file,element){const doc=element.ownerDocument;const name=doc.createElement('div');name.className='suggestion-title';name.textContent=file.name||file.path.split('/').pop();const path=doc.createElement('div');path.className='suggestion-note';path.textContent=file.path;element.append(name,path);}
+ renderSuggestion(file,element){
+  const doc=element.ownerDocument,filename=file.name||file.path.split('/').pop(),ext=(file.extension||filename.split('.').pop()).toLowerCase(),directory=file.path.includes('/')?file.path.slice(0,file.path.lastIndexOf('/')):'';
+  element.classList.add('jm-file-suggest-row');element.title=file.path;
+  const icon=doc.createElement('span');icon.className='jm-file-suggest-icon';setIcon(icon,['png','jpg','jpeg','webp','gif','svg'].includes(ext)?'image':'file-text');icon.setAttribute('aria-hidden','true');
+  const text=doc.createElement('div');text.className='jm-file-suggest-text';const name=doc.createElement('div');name.className='jm-file-suggest-name';name.textContent=ext==='md'?filename.slice(0,-3):filename;text.appendChild(name);
+  if(directory){const path=doc.createElement('div');path.className='jm-file-suggest-path';path.textContent=directory;text.appendChild(path);}
+  element.append(icon,text);
+ }
  selectSuggestion(file){this.editor.choose(file);this.close();}
 }
 class MentionInput{
