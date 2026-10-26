@@ -31,4 +31,4 @@ if($Enable){
  }
 }
 Write-Output ('已安装：'+$target)
-Write-Output '重新打开 Obsidian 后，在插件设置中配置 DeepSeek API Key。现有 data.json 和附件缓存保持不变。'
+Write-Output '重新打开 Obsidian 后，在插件设置中配置 DeepSeek API Key。安装不会覆盖个人数据；首次启用 0.1.17 会将旧话题与附件校验迁移到笔记库 NoteReply 目录，并保留备份。'

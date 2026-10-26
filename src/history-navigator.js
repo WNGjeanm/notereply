@@ -23,7 +23,7 @@ class HistoryNavigator{
    item.number.textContent=index+1;item.title.textContent=turn.title;item.answer.textContent=turn.answer;item.button.setAttribute('aria-label','第 '+(index+1)+' 轮：'+turn.title);
   });this.active();
  }
- active(){if(this.root.hidden)return;const limit=this.owner.list.getBoundingClientRect().top+Math.min(80,this.owner.list.clientHeight*.28);let active=this.items.keys().next().value;for(const id of this.items.keys()){const target=this.owner.cards.get(id)?.root;if(target&&target.getBoundingClientRect().top<=limit)active=id;}
+ active(){if(this.root.hidden||this.panel.hidden)return;const limit=this.owner.list.getBoundingClientRect().top+Math.min(80,this.owner.list.clientHeight*.28);let active=this.items.keys().next().value;for(const id of this.items.keys()){const target=this.owner.cards.get(id)?.root;if(target&&target.getBoundingClientRect().top<=limit)active=id;}
   for(const [id,item]of this.items){const selected=id===active;item.button.classList.toggle('is-active',selected);if(selected)item.button.setAttribute('aria-current','true');else item.button.removeAttribute('aria-current');}
  }
  open(pinned=false){if(this.root.hidden)return;clearTimeout(this.closeTimer);this.pinned=!!pinned||this.pinned;this.panel.hidden=false;this.trigger.setAttribute('aria-expanded','true');this.active();const active=this.list.querySelector('[aria-current=true]');if(active){const top=active.offsetTop,bottom=top+active.offsetHeight;if(top<this.list.scrollTop)this.list.scrollTop=top;else if(bottom>this.list.scrollTop+this.list.clientHeight)this.list.scrollTop=bottom-this.list.clientHeight;}}

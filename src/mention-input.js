@@ -23,11 +23,11 @@ function pointAt(root,offset){
  }return {node:root,offset:root.childNodes.length};
 }
 class FileMentionSuggest extends AbstractInputSuggest{
- constructor(owner,editor){super(owner.app,editor.el);this.editor=editor;this.limit=30;
+ constructor(owner,editor){super(owner.app,editor.el);this.editor=editor;this.plugin=owner.plugin;this.limit=30;
   if(this.suggestEl){this.suggestEl.classList.add('jm-file-suggest');const doc=editor.el.ownerDocument,head=doc.createElement('div');head.className='jm-file-suggest-head';head.textContent='引用文件';this.suggestEl.prepend(head);}
  }
  open(){const menu=this.suggestEl,input=this.editor.el,rect=input.getBoundingClientRect?.();if(menu&&rect){const win=input.ownerDocument.defaultView;const width=Math.min(480,rect.width,win.innerWidth-24);menu.style.setProperty('--jm-mention-width',Math.max(0,width)+'px');}super.open();}
- getSuggestions(){if(this.editor.composing)return [];const context=this.editor.context();if(!context)return [];return rankFiles(this.app.vault.getFiles?.()||[],context.query,this.app.vault.configDir);}
+ getSuggestions(){if(this.editor.composing)return [];const context=this.editor.context();if(!context)return [];return rankFiles((this.app.vault.getFiles?.()||[]).filter(f=>!this.plugin?.store||!f.path.startsWith(this.plugin.store.root+'/')),context.query,this.app.vault.configDir);}
  renderSuggestion(file,element){
   const doc=element.ownerDocument,filename=file.name||file.path.split('/').pop(),ext=(file.extension||filename.split('.').pop()).toLowerCase(),directory=file.path.includes('/')?file.path.slice(0,file.path.lastIndexOf('/')):'';
   element.classList.add('jm-file-suggest-row');element.title=file.path;

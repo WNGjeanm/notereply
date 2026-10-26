@@ -9,6 +9,7 @@ const VIEW_TYPE='jeanmk-ai-chat',READING_VIEW_TYPE='jeanmk-ai-reading';
 let logLabelSequence=0;
 function el(doc,tag,cls,text){const n=doc.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=text;return n;}
 function button(parent,text,action,cls=''){const b=el(parent.ownerDocument,'button',cls,text);b.type='button';b.addEventListener('mousedown',e=>e.preventDefault());b.addEventListener('click',()=>Promise.resolve().then(action).catch(e=>new Notice(errorMessage(e))));parent.appendChild(b);return b;}
+function renderContent(message){return message.status==='streaming'?message.content.replace(/^([ \t]*)(`{3,}|~{3,})(?:mermaid|chart|echarts|vega|plantuml|dot|markmap)\b/gim,'$1$2text'):message.content;}
 function selectionWithin(doc,node){return selectionText(doc,node);}
 function iconButton(parent,label,icon,action){const b=button(parent,'',action,'jm-icon-button');setIcon(b,icon);setTooltip(b,label);b.setAttribute('aria-label',label);return b;}
 function bindSelectionFollowup(component,plugin,body,message){
@@ -52,7 +53,7 @@ class ReadingView extends ItemView{
  getDisplayText(){return '回答 · 大窗阅读';}
  getIcon(){return 'book-open';}
  getState(){return {messageId:this.messageId};}
- async setState(state,result){this.messageId=state.messageId;this.render();await super.setState(state,result);}
+ async setState(state,result){this.messageId=state.messageId;await this.plugin.ensureMessageLoaded(this.messageId);this.render();await super.setState(state,result);}
  async onOpen(){this.contentEl.addClass('jm-reader-content');this.unsubscribe=this.plugin.subscribe(()=>this.refresh());this.render();}
  message(){return this.plugin.data.topics.flatMap(t=>t.messages).find(m=>m.id===this.messageId);}
  render(){
@@ -75,10 +76,10 @@ class ReadingView extends ItemView{
   if(!this.root)return;this.root.style.setProperty('--jm-bubble-size',this.plugin.data.settings.bubbleFontSize+'px');
   const m=this.message();if(!m){if(this.body)this.render();return;}
   for(const b of this.body?.querySelectorAll('[data-jm-block-insert]')||[])b.disabled=m.status!=='done';
-  if(!this.body||this.renderedContent===m.content)return;
-  this.renderedContent=m.content;const node=el(this.body.ownerDocument,'div');this.body.replaceChildren(node);
+  const stamp=m.content+'|'+m.status;if(!this.body||this.renderedContent===stamp)return;
+  this.renderedContent=stamp;const node=el(this.body.ownerDocument,'div');this.body.replaceChildren(node);
   if(this.renderChild)this.component.removeChild(this.renderChild);this.renderChild=new Component();this.component.addChild(this.renderChild);
-  MarkdownRenderer.render(this.app,m.content,node,m.sourcePath||'',this.renderChild).then(()=>{enhanceBlocks(this.plugin,m,node,this.renderChild,{el,iconButton,Notice});}).catch(e=>{node.textContent=errorMessage(e);});
+  MarkdownRenderer.render(this.app,renderContent(m),node,m.sourcePath||'',this.renderChild).then(()=>{if(m.status!=='streaming')enhanceBlocks(this.plugin,m,node,this.renderChild,{el,iconButton,Notice});}).catch(e=>{node.textContent=errorMessage(e);});
  }
  async onClose(){this.unsubscribe?.();if(this.component)this.removeChild(this.component);this.contentEl.empty();}
 }
@@ -135,8 +136,9 @@ class ChatView extends ItemView{
  refresh(type){
   if(this.closed||!this.root)return;
   const p=this.plugin,t=p.activeTopic(),s=p.data.settings,d=this.root.ownerDocument;
+  if(type==='stream'){const latest=t.messages.at(-1),card=latest&&this.cards.get(latest.id);if(card&&latest.role==='assistant')this.updateCard(card,latest);this.scrollBottom();return;}
   this.root.style.setProperty('--jm-bubble-size',s.bubbleFontSize+'px');this.root.style.setProperty('--jm-input-size',s.inputFontSize+'px');this.root.style.setProperty('--jm-user-lines',String(s.userCollapseLines));
-  this.topicPicker.refresh();
+  this.topicPicker.refresh();this.topicPicker.trigger.disabled=!!p.switchingTopic;this.topicPicker.trigger.setAttribute('aria-busy',String(!!p.switchingTopic));this.newTopicButton.disabled=!!p.switchingTopic;this.input.contentEditable=p.switchingTopic?'false':'true';
   const topicChanged=this.topicId!==t.id;
   if(topicChanged||type==='history'){
    for(const card of this.cards.values())this.removeChild(card.component);this.cards.clear();this.list.replaceChildren();this.topicId=t.id;this.atBottom=true;
@@ -193,10 +195,11 @@ class ChatView extends ItemView{
    }return;
   }
 
-  if(c.lastContent!==m.content){
+  if(c.lastContent!==m.content||c.lastStreaming!==(m.status==='streaming')){
+   c.lastStreaming=m.status==='streaming';
    c.lastContent=m.content;const content=m.content,renderNode=el(c.body.ownerDocument,'div');
    if(c.renderChild)c.component.removeChild(c.renderChild);c.renderChild=new Component();c.component.addChild(c.renderChild);
-   if(content)MarkdownRenderer.render(this.app,content,renderNode,m.sourcePath||'',c.renderChild).then(()=>{if(c.lastContent!==content)return;c.body.replaceChildren(renderNode);enhanceBlocks(this.plugin,m,renderNode,c.renderChild,{el,iconButton,Notice});this.scrollBottom();}).catch(e=>{c.status.textContent=errorMessage(e);});else c.body.replaceChildren();
+   if(content)MarkdownRenderer.render(this.app,renderContent(m),renderNode,m.sourcePath||'',c.renderChild).then(()=>{if(c.lastContent!==content)return;c.body.replaceChildren(renderNode);if(m.status!=='streaming')enhanceBlocks(this.plugin,m,renderNode,c.renderChild,{el,iconButton,Notice});this.scrollBottom();}).catch(e=>{c.status.textContent=errorMessage(e);});else c.body.replaceChildren();
   }
   if(c.lastReasoning!==m.reasoning){c.lastReasoning=m.reasoning;c.thinkingBody.textContent=m.reasoning||'';}
   c.thinking.hidden=!m.deepThink&&!m.reasoning;
@@ -215,7 +218,7 @@ class ChatView extends ItemView{
   }
   for(const a of draft.attachments||[]){const card=el(d,'div','jm-attachment');if(a.kind==='image'){const img=el(d,'img');img.alt=a.name;p.attachments.preview(a,d).then(url=>{if(card.isConnected)img.src=url;}).catch(()=>{});card.appendChild(img);}const info=el(d,'span','',a.name);info.title=a.note||a.name;card.appendChild(info);button(card,'×',()=>{draft.attachments=draft.attachments.filter(x=>x.id!==a.id);p.save();p.notify('attachments');},'jm-subtle');this.attachments.appendChild(card);}
  }
- updateSend(){if(!this.sendButton)return;this.sendButton.textContent=this.plugin.busy?'停止 ■':'发送 ↑';this.sendButton.disabled=!!this.adding||(!this.plugin.busy&&!this.input.value.trim()&&!(this.plugin.draft().attachments||[]).length&&!this.plugin.draft().reference?.text&&!this.plugin.draft().followup?.text);}
+ updateSend(){if(!this.sendButton)return;this.sendButton.textContent=this.plugin.busy?'停止 ■':'发送 ↑';this.sendButton.disabled=!!this.adding||!!this.plugin.switchingTopic||(!this.plugin.busy&&!this.input.value.trim()&&!(this.plugin.draft().attachments||[]).length&&!this.plugin.draft().reference?.text&&!this.plugin.draft().followup?.text);}
  resizeInput(){this.input.style.height='auto';const line=parseFloat(this.root.ownerDocument.defaultView.getComputedStyle(this.input).lineHeight)||22;this.input.style.height=Math.max(line*3+20,Math.min(this.input.scrollHeight,line*6+20))+'px';}
  syncScrollState(){if(!this.list||this.closed)return;this.atBottom=this.list.scrollHeight-this.list.scrollTop-this.list.clientHeight<=8;this.scrollButton.hidden=this.atBottom;}
  scrollBottom(){if(this.closed)return;if(!this.atBottom){this.syncScrollState();return;}this.root?.ownerDocument.defaultView.requestAnimationFrame(()=>{if(this.closed||!this.atBottom)return;this.list.scrollTop=this.list.scrollHeight;this.syncScrollState();});}
@@ -244,8 +247,8 @@ class AISettings extends PluginSettingTab{
   new Setting(c).setName('助手行为').setHeading();
   new Setting(c).setName('系统提示词').setDesc('控制回答风格，不会自动读取整个仓库。').addTextArea(t=>{t.inputEl.rows=6;t.inputEl.style.width='100%';t.setValue(s.systemPrompt).onChange(v=>{s.systemPrompt=v;p.scheduleSave();});});
   new Setting(c).setName('本地记录').setHeading();
-  new Setting(c).setName('清除全部对话与附件缓存').setDesc('清除当前插件的聊天记录与上传附件缓存；保留笔记、配置及 API Key。').addButton(b=>b.setButtonText('清除记录').setWarning().onClick(async()=>{if(await new ConfirmModal(this.app,'清除对话记录','此操作会清除所有话题及插件附件缓存，不删除任何笔记。','清除').openResult())await p.clearHistory();}));
-  const footer=c.createDiv({cls:'jm-settings-footer'});footer.setText(`笔答 · NoteReply · v${p.version||p.manifest.version} · 设置保存在当前仓库插件数据中`);
+  new Setting(c).setName('清除全部对话与附件缓存').setDesc('清除当前聊天记录与附件缓存；保留迁移备份、笔记、配置及 API Key。').addButton(b=>b.setButtonText('清除记录').setWarning().onClick(async()=>{if(await new ConfirmModal(this.app,'清除对话记录','此操作会清除所有话题及插件附件缓存，不删除任何笔记。','清除').openResult())await p.clearHistory();}));
+  const footer=c.createDiv({cls:'jm-settings-footer'});footer.setText(`笔答 · NoteReply · v${p.version||p.manifest.version} · 设置保存在插件配置中 · 对话保存在 NoteReply 目录`);
  }
 }
 module.exports={VIEW_TYPE,READING_VIEW_TYPE,ChatView,ReadingView,AISettings,ConfirmModal,RenameTopicModal,button,el};

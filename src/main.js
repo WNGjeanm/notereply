@@ -4,6 +4,7 @@ const {EditorView}=require('@codemirror/view');
 const {version:BUILD_VERSION}=require('../package.json');
 const {id,topic,normalizeData,historyRounds,buildMessages,requestBody,streamCompletion,errorMessage,selectionMatches}=require('./core');
 const {Attachments}=require('./attachments');
+const {TopicStore}=require('./storage');
 const {resolveMessageLinks}=require('./links');
 const {selectedTableText,selectionText}=require('./selection');
 const {VIEW_TYPE,READING_VIEW_TYPE,ChatView,ReadingView,AISettings,ConfirmModal,RenameTopicModal,el,button}=require('./ui');
@@ -11,7 +12,7 @@ const {VIEW_TYPE,READING_VIEW_TYPE,ChatView,ReadingView,AISettings,ConfirmModal,
 class JeanmkAIPlugin extends Plugin{
  async onload(){
   this.version=BUILD_VERSION;if(!Object.isFrozen(this.manifest))this.manifest.version=BUILD_VERSION;
-  this.data=normalizeData(await this.loadData());this.listeners=new Set();this.headerButtons=new Map();this.busy=false;this.unloading=false;this.saveQueue=Promise.resolve();this.attachments=new Attachments(this);this.lastEditor=null;this.lastSelection='';
+  this.store=new TopicStore(this);this.data=normalizeData(await this.store.open(await this.loadData()));this.listeners=new Set();this.headerButtons=new Map();this.busy=false;this.unloading=false;this.saveQueue=Promise.resolve();this.attachments=new Attachments(this);this.lastEditor=null;this.lastSelection='';
   this.registerView(VIEW_TYPE,leaf=>new ChatView(leaf,this));
   this.registerView(READING_VIEW_TYPE,leaf=>new ReadingView(leaf,this));
   this.addRibbonIcon('messages-square','打开 AI 对话',()=>this.openChat());
@@ -22,7 +23,7 @@ class JeanmkAIPlugin extends Plugin{
   this.registerEvent(this.app.workspace.on('editor-menu',(menu,editor,info)=>{if(editor.getSelection())menu.addItem(item=>item.setTitle('使用选中文字提问').setIcon('messages-square').onClick(()=>{this.capture(editor,info.file,info);this.openChat();}));}));
   this.registerEvent(this.app.workspace.on('active-leaf-change',leaf=>{if(leaf?.view instanceof MarkdownView)this.capture(leaf.view.editor,leaf.view.file,leaf.view);this.refreshHeaders();}));
   this.registerEvent(this.app.workspace.on('layout-change',()=>this.refreshHeaders()));
-  this.registerEvent(this.app.vault.on('rename',(file,old)=>this.renameSource(file,old)));
+  this.registerEvent(this.app.vault.on('rename',(file,old)=>this.renameSource(file,old).catch(e=>new Notice(errorMessage(e)))));
   this.registerEditorExtension(EditorView.updateListener.of(update=>{
    if(!update.view.hasFocus||(!update.selectionSet&&!update.docChanged))return;
    const info=update.state.field(editorInfoField,false);if(info?.editor&&info.file)this.capture(info.editor,info.file,info);
@@ -31,21 +32,22 @@ class JeanmkAIPlugin extends Plugin{
   this.registerEvent(this.app.workspace.on('window-open',(_window,win)=>this.watchSelectionDocument(win.document)));
   for(const leaf of this.app.workspace.getLeavesOfType('markdown'))this.watchSelectionDocument(leaf.view.containerEl.ownerDocument);
   this.app.workspace.onLayoutReady(()=>{this.refreshHeaders();const view=this.app.workspace.getActiveViewOfType(MarkdownView);if(view)this.capture(view.editor,view.file,view);});
-  this.register(()=>{this.unloading=true;clearTimeout(this.saveTimer);clearTimeout(this.notifyTimer);this.controller?.abort();for(const b of this.headerButtons.values())b.remove();this.headerButtons.clear();this.listeners.clear();});
+  this.register(()=>{this.unloading=true;clearTimeout(this.saveTimer);clearTimeout(this.notifyTimer);clearTimeout(this.checkpointTimer);this.controller?.abort();for(const b of this.headerButtons.values())b.remove();this.headerButtons.clear();this.listeners.clear();});
   await this.save();
  }
- async onunload(){this.controller?.abort();await this.save();}
+ async onunload(){this.unloading=true;this.controller?.abort();if(this.running)await this.running;await this.save(this.data?.topics.filter(t=>t._loaded!==false).map(t=>t.id)||[]);}
  activeTopic(){return this.data.topics.find(t=>t.id===this.data.activeTopicId)||this.data.topics[0];}
  draft(t=this.activeTopic()){if(!t.draft)t.draft={text:'',attachments:[],reference:null,followup:null};if(!Array.isArray(t.draft.attachments))t.draft.attachments=[];return t.draft;}
  subscribe(fn){this.listeners.add(fn);return()=>this.listeners.delete(fn);}
  notify(type){for(const fn of this.listeners)fn(type);}
- notifyStream(){if(this.notifyTimer)return;this.notifyTimer=setTimeout(()=>{this.notifyTimer=null;this.notify('stream');},120);}
- scheduleSave(){clearTimeout(this.saveTimer);this.saveTimer=setTimeout(()=>this.save(),800);}
- save(){
+ notifyStream(){
+  if(!this.checkpointTimer)this.checkpointTimer=setTimeout(()=>{this.checkpointTimer=null;this.save([this.generatingTopicId]).catch(()=>{});},2500);
+  if(this.notifyTimer)return;this.notifyTimer=setTimeout(()=>{this.notifyTimer=null;this.notify('stream');},350);
+ }
+ scheduleSave(){this.store.dirty.add(this.data.activeTopicId);clearTimeout(this.saveTimer);this.saveTimer=setTimeout(()=>this.save([]).catch(()=>{}),800);}
+ save(topicIds=[this.data?.activeTopicId]){
   if(!this.data)return Promise.resolve();clearTimeout(this.saveTimer);
-  const snapshot=JSON.parse(JSON.stringify(this.data));
-  this.saveQueue=(this.saveQueue||Promise.resolve()).catch(()=>{}).then(()=>this.saveData(snapshot));
-  this.saveQueue.catch(()=>{if(!this.unloading)new Notice('对话保存失败，请检查仓库是否可写。');});return this.saveQueue;
+  const promise=this.store.save(this.data,topicIds);promise.catch(error=>{if(!this.unloading)new Notice('对话保存失败：'+errorMessage(error),8000);});return promise;
  }
  apiKey(){return this.app.secretStorage?.getSecret(this.data.secretId)||'';}
  setApiKey(value){if(!this.app.secretStorage)throw new Error('当前 Obsidian 不支持 SecretStorage，请升级到1.11.4或以上版本。');this.app.secretStorage.setSecret(this.data.secretId,value);this.save();}
@@ -103,14 +105,21 @@ class JeanmkAIPlugin extends Plugin{
   if(t.view instanceof MarkdownView&&(!t.view.containerEl.isConnected||t.view.file?.path!==t.filePath))return null;
   return t;
  }
- renameSource(file,old){
+ async renameSource(file,old){
+  if([file.path,old].some(path=>path===this.store.root||path.startsWith(this.store.root+'/')||path.startsWith(this.app.vault.configDir+'/')))return;
   const remap=value=>value===old?file.path:value?.startsWith(old+'/')?file.path+value.slice(old.length):value;
   if(this.lastEditor)this.lastEditor.filePath=remap(this.lastEditor.filePath);
-  for(const t of this.data.topics)for(const m of [...t.messages,t.draft||{}]){if(m.reference)m.reference.filePath=remap(m.reference.filePath);if(m.sourcePath)m.sourcePath=remap(m.sourcePath);}
+  for(const t of this.data.topics){await this.store.loadTopic(this.data,t.id);this.store.dirty.add(t.id);for(const m of [...t.messages,t.draft||{}]){if(m.reference)m.reference.filePath=remap(m.reference.filePath);if(m.sourcePath)m.sourcePath=remap(m.sourcePath);}}
   this.scheduleSave();this.notify('target');
  }
  async newTopic(){if(this.busy){this.stop();await this.running;}const t=topic();this.data.topics.push(t);this.data.activeTopicId=t.id;this.lastSelection='';this.selectedBubble=null;await this.save();await this.openChat();this.notify('topics');}
- async switchTopic(topicId){if(!this.data.topics.some(t=>t.id===topicId))return;this.data.activeTopicId=topicId;this.selectedBubble=null;await this.save();this.notify('topic');}
+ async switchTopic(topicId){
+  if(!this.data.topics.some(t=>t.id===topicId))return;const sequence=(this.topicSwitchSeq||0)+1;this.topicSwitchSeq=sequence;this.switchingTopic=true;this.notify('topic-loading');
+  try{await this.save();await this.store.loadTopic(this.data,topicId);if(sequence!==this.topicSwitchSeq)return;this.data.activeTopicId=topicId;this.selectedBubble=null;await this.save();}
+  finally{if(sequence===this.topicSwitchSeq){this.switchingTopic=false;this.notify('topic');}}
+ }
+ async ensureMessageLoaded(messageId){if(!messageId)return;for(const t of this.data.topics)if(t._loaded!==false&&t.messages.some(m=>m.id===messageId))return;for(const t of this.data.topics)if(t._loaded===false){await this.store.loadTopic(this.data,t.id);if(t.messages.some(m=>m.id===messageId))return;}}
+
  async followup(message,text){
   const selected=text||this.selectedText(message);
   this.draft().followup={messageId:message.id,text:selected||message.content};this.selectedBubble=null;await this.save();const view=await this.openChat();this.notify('draft');view.input.focus();
@@ -133,7 +142,7 @@ class JeanmkAIPlugin extends Plugin{
   return '';
  }
  async send(){
-  if(this.busy)return;
+  if(this.busy||this.switchingTopic)return;
   const apiKey=this.apiKey();if(!apiKey){new Notice('请先在插件设置中配置 DeepSeek API Key。');this.openSettings();return;}
   const t=this.activeTopic(),draft=this.draft(t);
   if(!draft.text.trim()&&!draft.reference&&!draft.followup&&!draft.attachments.length)return;
@@ -145,20 +154,20 @@ class JeanmkAIPlugin extends Plugin{
  async generate(t,user,history,apiKey){
   const settings={...this.data.settings};
   const message={id:id(),role:'assistant',content:'',reasoning:'',deepThink:settings.deepThink,status:'streaming',bad:false,createdAt:new Date().toISOString(),sourcePath:user.sourcePath||user.reference?.filePath||this.currentTarget()?.filePath||'',reference:user.reference?JSON.parse(JSON.stringify(user.reference)):null,replyTo:user.id};
-  t.messages.push(message);this.busy=true;this.controller=new AbortController();this.notify('message');
+  t.messages.push(message);this.busy=true;this.controller=new AbortController();this.generatingTopicId=t.id;this.notify('message');
   this.running=(async()=>{
    try{
-    await this.save();
+    await this.save([t.id]);
     message.readingLinks=true;this.notify('message');
     const linkDoc=this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view.contentEl?.ownerDocument||(typeof document!=='undefined'?document:null);
-    await resolveMessageLinks(this,user,linkDoc,this.controller.signal);message.readingLinks=false;await this.save();this.notify('links');
+    await resolveMessageLinks(this,user,linkDoc,this.controller.signal);message.readingLinks=false;await this.save([t.id]);this.notify('links');
     const messages=await buildMessages(settings,history,user,a=>this.attachments.load(a));
     const result=await streamCompletion({requestUrl,preferNative:!!Platform.isMobile,onTransport:()=>{if(!this.nativeNoticeShown){this.nativeNoticeShown=true;new Notice('当前环境使用兼容请求，回答生成完成后显示。',6000);}},apiKey,body:requestBody(settings,messages),signal:this.controller.signal,onDelta:delta=>{message.content+=delta.content;message.reasoning+=delta.reasoning;this.notifyStream();}});
     message.status='done';message.completedAt=new Date().toISOString();
     if(result.finishReason==='length')message.warning='已达到模型输出上限，回答可能未完成，可继续追问。';
     if(!message.content)throw new Error('模型没有返回回答正文，请重试。');
    }catch(e){message.status=e.name==='AbortError'?'stopped':'error';message.error=errorMessage(e);}
-   finally{message.readingLinks=false;this.busy=false;this.controller=null;clearTimeout(this.notifyTimer);this.notifyTimer=null;await this.save();this.notify('message');}
+   finally{clearTimeout(this.checkpointTimer);this.checkpointTimer=null;message.readingLinks=false;this.busy=false;this.controller=null;clearTimeout(this.notifyTimer);this.notifyTimer=null;await this.save([t.id]);this.notify('message');}
   })();return this.running;
  }
  stop(){this.controller?.abort();}
@@ -194,15 +203,16 @@ class JeanmkAIPlugin extends Plugin{
   const value=title===undefined?await new RenameTopicModal(this.app,target.title).openResult():title;if(value===null)return;
   const name=String(value).replace(/\s+/g,' ').trim();if(!name||name.length>80)throw new Error('话题名称需为1到80个字符。');
   target=this.data.topics.find(t=>t.id===topicId);if(!target)return;
-  target.title=name;target.titleCustom=true;await this.save();this.notify('topics');
+  await this.store.loadTopic(this.data,topicId);target.title=name;target.titleCustom=true;await this.save([topicId]);this.notify('topics');
  }
  async deleteTopic(topicId=this.data.activeTopicId){
   if(this.busy)throw new Error('请先停止生成，再删除话题。');
   const target=this.data.topics.find(t=>t.id===topicId);if(!target)return;
   if(!await new ConfirmModal(this.app,'删除话题',`将删除“${target.title}”及其中的全部对话和草稿。其他话题和已写入的笔记不受影响。`,'删除话题').openResult())return;
   if(this.busy)throw new Error('正在生成回答，请停止后重试删除。');
-  this.data.topics=this.data.topics.filter(t=>t.id!==topicId);if(!this.data.topics.length)this.data.topics.push(topic());
+  await this.store.loadTopic(this.data,topicId);this.store.dirty.add(topicId);this.data.topics=this.data.topics.filter(t=>t.id!==topicId);if(!this.data.topics.length)this.data.topics.push(topic());
   if(this.data.activeTopicId===topicId)this.data.activeTopicId=this.data.topics.at(-1).id;
+  await this.store.loadTopic(this.data,this.data.activeTopicId);
   const removed=new Set(target.messages.map(m=>m.id));for(const t of this.data.topics)if(removed.has(t.draft?.followup?.messageId))t.draft.followup=null;
   this.lastSelection='';if(removed.has(this.selectedBubble?.id))this.selectedBubble=null;
   await this.save();this.notify('topics');this.notify('topic');this.notify('round-deleted');new Notice('已删除话题');
@@ -219,10 +229,11 @@ class JeanmkAIPlugin extends Plugin{
   if(!t.titleCustom)t.title=(t.messages.find(m=>m.role==='user')?.content||'新话题').replace(/\s+/g,' ').slice(0,28);
   for(const topic of this.data.topics)if(removed.has(topic.draft?.followup?.messageId))topic.draft.followup=null;
   if(removed.has(this.selectedBubble?.id))this.selectedBubble=null;
-  await this.save();this.notify('round-deleted');this.notify('draft');new Notice('已删除本轮提问与回答');
+  await this.save([t.id]);this.notify('round-deleted');this.notify('draft');new Notice('已删除本轮提问与回答');
  }
  async clearHistory(){
   if(this.busy){this.stop();await this.running;}
+  for(const existing of this.data.topics)await this.store.loadTopic(this.data,existing.id);
   const t=topic();this.data.topics=[t];this.data.activeTopicId=t.id;this.lastSelection='';this.selectedBubble=null;
   await this.attachments.clear();await this.save();this.notify('history');this.notify('topics');
  }

@@ -16,3 +16,7 @@ Thumbs.db
 /pdf.mjs
 /pdf.worker.mjs
 test/*验证结果.json
+
+/预览-*.png
+
+NoteReply/

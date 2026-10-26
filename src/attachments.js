@@ -48,7 +48,7 @@ function htmlToMarkdown(html,doc){
 }
 class Attachments {
  constructor(plugin){this.plugin=plugin;}
- get folder(){return `${this.plugin.app.vault.configDir}/plugins/${this.plugin.manifest.id}/attachments`;}
+ get folder(){return this.plugin.store.attachments;}
  async ensureFolder(){const adapter=this.plugin.app.vault.adapter;if(!await adapter.exists(this.folder))await adapter.mkdir(this.folder);}
  async store(name,kind,bytes,mime,extra={}){
   await this.ensureFolder();const a={id:id(),name,kind,mime,size:bytes.byteLength,...extra};a.storagePath=`${this.folder}/${a.id}.${kind==='image'?'img':'txt'}`;
