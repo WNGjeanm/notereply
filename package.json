@@ -1,12 +1,12 @@
 {
   "name": "notereply",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "private": true,
   "description": "笔答 NoteReply：在 Obsidian 中与笔记、文件和图片对话，并将回答写回 Markdown。",
   "main": "main.js",
   "scripts": {
     "build": "node build.cjs",
-    "test": "node --test test/core.test.cjs test/plugin.test.cjs test/blocks.test.cjs test/links.test.cjs test/mentions.test.cjs test/mention-input.test.cjs test/transport.test.cjs"
+    "test": "node --test test/core.test.cjs test/plugin.test.cjs test/blocks.test.cjs test/links.test.cjs test/mentions.test.cjs test/mention-input.test.cjs test/transport.test.cjs test/history-navigator.test.cjs"
   },
   "devDependencies": {
     "esbuild": "0.25.12"

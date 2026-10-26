@@ -28,9 +28,10 @@ test('plugin lifecycle and full send → followup → insert/replace → new top
   plugin.app={secretStorage:{getSecret:key=>secrets[key]||'',setSecret:(key,value)=>secrets[key]=value},workspace:{on:()=>({}),onLayoutReady:fn=>fn(),getLeavesOfType:t=>t==='markdown'?[{view}]:[],getActiveViewOfType:()=>view},vault:{configDir:'.obsidian',on:()=>({}),adapter:{}}};
   await plugin.onload();assert.equal(plugin.version,require('../package.json').version);assert.equal(plugin.manifest.version,plugin.version,'Runtime version must replace stale Obsidian manifest metadata');assert.equal(plugin.registered.length,3);plugin.openChat=async()=>({input:{focus(){}}});plugin.openSettings=()=>{plugin.settingsOpened=true;};
   plugin.draft().text='润色';await plugin.send();assert(plugin.settingsOpened);assert.equal(requests.length,0);
+  await plugin.renameTopic(plugin.data.activeTopicId,' 手动命名 ');assert.equal(plugin.activeTopic().title,'手动命名');assert.equal(plugin.activeTopic().titleCustom,true);await assert.rejects(()=>plugin.renameTopic(plugin.data.activeTopicId,'   '),/1到80/);
   plugin.setApiKey('test-only-key');plugin.capture(editor,view.file,view);
   assert.equal(requests.length,0,'Selecting text must not call DeepSeek');assert.equal(plugin.draft().reference.text,'需要润色的句子');
-  await plugin.send();assert.equal(requests.length,1);let answer=plugin.activeTopic().messages.at(-1);assert.equal(answer.status,'done');assert.equal(answer.reasoning,'先分析原文');assert.match(answer.content,/规范的句子/);assert.match(requests[0].messages[1].content,/需要润色的句子/);
+  await plugin.send();assert.equal(requests.length,1);let answer=plugin.activeTopic().messages.at(-1);assert.equal(answer.status,'done');assert.equal(plugin.activeTopic().title,'手动命名');assert.equal(plugin.saved.topics[0].titleCustom,true);assert.equal(answer.reasoning,'先分析原文');assert.match(answer.content,/规范的句子/);assert.match(requests[0].messages[1].content,/需要润色的句子/);
   await plugin.writeAnswer(answer,true);assert.equal(editor.value,'原文：'+answer.content+'\n结束');assert.equal(editor.undo.length,1);
   await assert.rejects(()=>plugin.writeAnswer(answer,true),/原选区内容或位置已变化/);
   editor.from={line:0,ch:0};editor.to={line:0,ch:0};plugin.capture(editor,view.file,view);const previous=editor.value;await plugin.writeAnswer(answer,false);assert.equal(editor.value,answer.content+previous);

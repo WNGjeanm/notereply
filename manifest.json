@@ -1,7 +1,7 @@
 {
   "id": "jeanmk-obsidian-ai",
   "name": "笔答 · NoteReply",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "minAppVersion": "1.11.4",
   "description": "与笔记、文件和图片对话，将回答直接写回 Markdown。支持 DeepSeek。",
   "author": "WNGjeanm",

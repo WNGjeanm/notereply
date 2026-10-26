@@ -14,11 +14,12 @@ class TopicPicker{
    if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();const next=(Math.max(0,index)+(e.key==='ArrowDown'?1:-1)+choices.length)%choices.length;choices[next]?.focus();}
   });this.refresh();
  }
- refresh(){const t=this.plugin.activeTopic();this.trigger.textContent=t.title;this.trigger.title=t.title+' · 选择话题';const signature=JSON.stringify([this.plugin.busy,this.plugin.data.activeTopicId,this.plugin.data.topics.map(t=>[t.id,t.title])]);if(!this.menu.hidden&&signature!==this.signature){this.render();}this.signature=signature;}
+ refresh(){const t=this.plugin.activeTopic();this.trigger.textContent=t.title;this.trigger.title=t.title+' · 选择话题';this.trigger.setAttribute('aria-label','选择话题：'+t.title);const signature=JSON.stringify([this.plugin.busy,this.plugin.data.activeTopicId,this.plugin.data.topics.map(t=>[t.id,t.title])]);if(!this.menu.hidden&&signature!==this.signature){this.render();}this.signature=signature;}
  render(){const {el,button,iconButton}=this.helpers;this.menu.replaceChildren();
   for(const topic of [...this.plugin.data.topics].reverse()){
    const row=el(this.doc,'div','jm-topic-option');row.dataset.topicId=topic.id;row.classList.toggle('is-current',topic.id===this.plugin.data.activeTopicId);this.menu.appendChild(row);
    const choice=button(row,topic.title,async()=>{this.close();await this.plugin.switchTopic(topic.id);},'jm-topic-choice');choice.setAttribute('role','menuitem');choice.title=topic.title;choice.dataset.topicId=topic.id;if(topic.id===this.plugin.data.activeTopicId)choice.setAttribute('aria-current','true');
+   const rename=iconButton(row,'重命名话题：'+topic.title,'pencil',async()=>{this.close();await this.plugin.renameTopic(topic.id);});rename.classList.add('jm-topic-rename');rename.dataset.topicId=topic.id;
    const remove=iconButton(row,'删除话题：'+topic.title,'trash-2',async()=>{this.close();await this.plugin.deleteTopic(topic.id);});remove.classList.add('jm-topic-remove');remove.disabled=this.plugin.busy;remove.dataset.topicId=topic.id;
   }
  }

@@ -1,5 +1,6 @@
 const {ItemView,Modal,Component,MarkdownRenderer,Notice,PluginSettingTab,Setting,setIcon,setTooltip,Platform}=require('obsidian');
 const {errorMessage}=require('./core');
+const {HistoryNavigator}=require('./history-navigator');
 const {selectionText}=require('./selection');
 const {enhanceBlocks}=require('./blocks');
 const {MentionInput,renderMentionText}=require('./mention-input');
@@ -31,6 +32,19 @@ class ConfirmModal extends Modal{
  openResult(){return new Promise(resolve=>{this.resolve=resolve;this.open();});}
  onOpen(){this.titleEl.textContent=this.heading;this.contentEl.appendChild(el(this.contentEl.ownerDocument,'p','',this.description));const actions=el(this.contentEl.ownerDocument,'div','jm-modal-actions');this.contentEl.appendChild(actions);button(actions,'取消',()=>this.close());button(actions,this.confirm,()=>{this.resolve?.(true);this.resolve=null;this.close();},'mod-warning');}
  onClose(){this.resolve?.(false);this.contentEl.empty();}
+}
+class RenameTopicModal extends Modal{
+ constructor(app,title){super(app);this.original=title;}
+ openResult(){return new Promise(resolve=>{this.resolve=resolve;this.open();});}
+ onOpen(){
+  this.modalEl.classList.add('jm-rename-modal');this.titleEl.textContent='重命名话题';const d=this.contentEl.ownerDocument;
+  const label=el(d,'label','jm-rename-label','话题名称');this.contentEl.appendChild(label);this.input=el(d,'input','jm-rename-input');this.input.type='text';this.input.maxLength=80;this.input.value=this.original;this.input.setAttribute('aria-label','话题名称');label.appendChild(this.input);
+  const error=el(d,'div','jm-rename-error');error.setAttribute('role','alert');this.contentEl.appendChild(error);
+  const submit=()=>{const name=this.input.value.replace(/\s+/g,' ').trim();if(!name||name.length>80){error.textContent='请输入1到80个字符的话题名称。';this.input.focus();return;}this.resolve?.(name);this.resolve=null;this.close();};
+  this.input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.isComposing&&e.keyCode!==229){e.preventDefault();submit();}});
+  const actions=el(d,'div','jm-modal-actions');this.contentEl.appendChild(actions);button(actions,'取消',()=>this.close());button(actions,'保存',submit,'jm-rename-save');setTimeout(()=>{this.input.focus();this.input.select();},0);
+ }
+ onClose(){this.resolve?.(null);this.resolve=null;this.contentEl.empty();}
 }
 class ReadingView extends ItemView{
  constructor(leaf,plugin){super(leaf);this.plugin=plugin;this.messageId=null;}
@@ -88,9 +102,10 @@ class ChatView extends ItemView{
   this.contentEl.empty();this.contentEl.addClass('jm-chat-content');this.root=el(d,'section','jm-chat');this.contentEl.appendChild(this.root);
   this.addAction('settings','打开 AI 助手设置',()=>p.openSettings());
   const top=el(d,'header','jm-chat-top');this.root.appendChild(top);
-  const brand=el(d,'div','jm-brand');brand.appendChild(el(d,'strong','','笔答'));top.appendChild(brand);
-  const nav=el(d,'div','jm-topic-nav');top.appendChild(nav);this.topicPicker=new TopicPicker(this,nav,{el,button,iconButton});button(nav,'＋ 新话题',()=>p.newTopic(),'jm-subtle');
-  this.list=el(d,'div','jm-messages');this.list.setAttribute('role','log');const logLabel=el(d,'span','jm-sr-only','对话记录');logLabel.id='jm-chat-log-label-'+(++logLabelSequence);this.root.appendChild(logLabel);this.list.setAttribute('aria-labelledby',logLabel.id);this.root.appendChild(this.list);
+  const brand=el(d,'div','jm-brand');brand.appendChild(el(d,'strong','','NoteReply'));top.appendChild(brand);
+  const nav=el(d,'div','jm-topic-nav');top.appendChild(nav);this.topicPicker=new TopicPicker(this,nav,{el,button,iconButton});this.newTopicButton=iconButton(nav,'新话题','square-pen',()=>p.newTopic());this.newTopicButton.classList.add('jm-new-topic');
+  this.stage=el(d,'div','jm-conversation-stage');this.root.appendChild(this.stage);
+  this.list=el(d,'div','jm-messages');this.list.setAttribute('role','log');const logLabel=el(d,'span','jm-sr-only','对话记录');logLabel.id='jm-chat-log-label-'+(++logLabelSequence);this.root.appendChild(logLabel);this.list.setAttribute('aria-labelledby',logLabel.id);this.stage.appendChild(this.list);this.historyNavigator=new HistoryNavigator(this,this.stage,{el,button,setIcon});
   this.list.addEventListener('scroll',()=>this.syncScrollState());
   this.scrollButton=button(this.root,'回到底部 ↓',()=>{this.atBottom=true;this.scrollButton.hidden=true;this.scrollBottom();},'jm-scroll-bottom');this.scrollButton.hidden=true;
   const ResizeObserver=d.defaultView.ResizeObserver;this.scrollObserver=new ResizeObserver(()=>{if(this.atBottom)this.scrollBottom();else this.syncScrollState();});this.scrollObserver.observe(this.list);
@@ -111,12 +126,12 @@ class ChatView extends ItemView{
   button(tools,'＋ 附件',()=>this.pickFiles(),'jm-subtle');button(tools,'截图',()=>{if(Platform.isMobile){new Notice('请使用系统截图，然后选择截图图片。');this.pickFiles();}else new ScreenshotModal(p,files=>this.addFiles(files)).open();},'jm-subtle');
   const thinking=el(d,'label','jm-thinking-toggle');this.thinkingCheck=el(d,'input');this.thinkingCheck.type='checkbox';thinking.appendChild(this.thinkingCheck);thinking.appendChild(d.createTextNode('深度思考'));tools.appendChild(thinking);
   this.thinkingCheck.addEventListener('change',()=>{p.data.settings.deepThink=this.thinkingCheck.checked;p.save();p.notify('settings');});
-  this.sendButton=button(tools,'发送 ↑',()=>p.busy?p.stop():this.send(),'mod-cta jm-send');
+  this.sendButton=button(tools,'发送 ↑',()=>p.busy?p.stop():this.send(),'jm-send');
   this.pick=el(d,'input');this.pick.type='file';this.pick.multiple=true;this.pick.accept='.md,.txt,.csv,.json,.log,.drawio,.xml,.svg,.docx,.pdf,.png,.jpg,.jpeg,.gif,.webp';this.pick.hidden=true;this.root.appendChild(this.pick);
   this.pick.addEventListener('change',()=>{this.addFiles(Array.from(this.pick.files||[]));this.pick.value='';});
   this.unsubscribe=p.subscribe(type=>this.refresh(type));this.refresh('topic');
  }
- async onClose(){this.closed=true;this.mentionInput?.destroy();this.topicPicker?.destroy();this.scrollObserver?.disconnect();this.unsubscribe?.();for(const card of this.cards.values())this.removeChild(card.component);this.cards.clear();}
+ async onClose(){this.closed=true;this.mentionInput?.destroy();this.topicPicker?.destroy();this.historyNavigator?.destroy();this.scrollObserver?.disconnect();this.unsubscribe?.();for(const card of this.cards.values())this.removeChild(card.component);this.cards.clear();}
  refresh(type){
   if(this.closed||!this.root)return;
   const p=this.plugin,t=p.activeTopic(),s=p.data.settings,d=this.root.ownerDocument;
@@ -137,7 +152,7 @@ class ChatView extends ItemView{
   const target=p.currentTarget();this.targetPath.textContent=target?target.filePath.split('/').pop():'请先打开 Markdown 笔记';
   this.targetPath.title=target?`写回至：${target.filePath}`:'请在笔记中设置光标';
   this.targetRow.classList.toggle('has-reference',!!(p.draft().reference?.text||p.draft().followup?.text));
-  this.updateSend();this.scrollButton.hidden=this.atBottom;this.scrollBottom();
+  this.historyNavigator.refresh();this.updateSend();this.scrollButton.hidden=this.atBottom;this.scrollBottom();
  }
  makeCard(m){
   const d=this.root.ownerDocument,root=el(d,'article',`jm-message jm-${m.role}`);root.dataset.messageId=m.id;
@@ -233,4 +248,4 @@ class AISettings extends PluginSettingTab{
   const footer=c.createDiv({cls:'jm-settings-footer'});footer.setText(`笔答 · NoteReply · v${p.version||p.manifest.version} · 设置保存在当前仓库插件数据中`);
  }
 }
-module.exports={VIEW_TYPE,READING_VIEW_TYPE,ChatView,ReadingView,AISettings,ConfirmModal,button,el};
+module.exports={VIEW_TYPE,READING_VIEW_TYPE,ChatView,ReadingView,AISettings,ConfirmModal,RenameTopicModal,button,el};

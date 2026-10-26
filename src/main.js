@@ -6,7 +6,7 @@ const {id,topic,normalizeData,historyRounds,buildMessages,requestBody,streamComp
 const {Attachments}=require('./attachments');
 const {resolveMessageLinks}=require('./links');
 const {selectedTableText,selectionText}=require('./selection');
-const {VIEW_TYPE,READING_VIEW_TYPE,ChatView,ReadingView,AISettings,ConfirmModal,el,button}=require('./ui');
+const {VIEW_TYPE,READING_VIEW_TYPE,ChatView,ReadingView,AISettings,ConfirmModal,RenameTopicModal,el,button}=require('./ui');
 
 class JeanmkAIPlugin extends Plugin{
  async onload(){
@@ -138,7 +138,7 @@ class JeanmkAIPlugin extends Plugin{
   const t=this.activeTopic(),draft=this.draft(t);
   if(!draft.text.trim()&&!draft.reference&&!draft.followup&&!draft.attachments.length)return;
   const user={id:id(),role:'user',content:draft.text.trim()||'请分析所引用的内容和附件。',createdAt:new Date().toISOString(),sourcePath:draft.reference?.filePath||this.currentTarget()?.filePath||'',reference:draft.reference?JSON.parse(JSON.stringify(draft.reference)):null,followup:draft.followup?{...draft.followup}:null,attachments:[...draft.attachments]};
-  if(t.messages.length===0)t.title=user.content.replace(/\s+/g,' ').slice(0,28);
+  if(t.messages.length===0&&!t.titleCustom)t.title=user.content.replace(/\s+/g,' ').slice(0,28);
   const history=historyRounds(t.messages,this.data.settings.historyRounds);t.messages.push(user);t.draft={text:'',reference:null,followup:null,attachments:[]};
   this.notify('draft');this.notify('topics');return this.generate(t,user,history,apiKey);
  }
@@ -189,6 +189,13 @@ class JeanmkAIPlugin extends Plugin{
    const cursor=target.editor.getCursor('head');target.editor.replaceRange(message.content,cursor);new Notice('已按 Markdown 插入 '+target.filePath+'，可撤销。');
   }
  }
+ async renameTopic(topicId,title){
+  let target=this.data.topics.find(t=>t.id===topicId);if(!target)return;
+  const value=title===undefined?await new RenameTopicModal(this.app,target.title).openResult():title;if(value===null)return;
+  const name=String(value).replace(/\s+/g,' ').trim();if(!name||name.length>80)throw new Error('话题名称需为1到80个字符。');
+  target=this.data.topics.find(t=>t.id===topicId);if(!target)return;
+  target.title=name;target.titleCustom=true;await this.save();this.notify('topics');
+ }
  async deleteTopic(topicId=this.data.activeTopicId){
   if(this.busy)throw new Error('请先停止生成，再删除话题。');
   const target=this.data.topics.find(t=>t.id===topicId);if(!target)return;
@@ -209,7 +216,7 @@ class JeanmkAIPlugin extends Plugin{
   if(this.busy)throw new Error('正在生成回答，请停止后重试删除。');
   const removed=new Set([message.id]);if(user){removed.add(user.id);for(const m of t.messages)if(m.replyTo===user.id)removed.add(m.id);}
   t.messages=t.messages.filter(m=>!removed.has(m.id));
-  t.title=(t.messages.find(m=>m.role==='user')?.content||'新话题').replace(/\s+/g,' ').slice(0,28);
+  if(!t.titleCustom)t.title=(t.messages.find(m=>m.role==='user')?.content||'新话题').replace(/\s+/g,' ').slice(0,28);
   for(const topic of this.data.topics)if(removed.has(topic.draft?.followup?.messageId))topic.draft.followup=null;
   if(removed.has(this.selectedBubble?.id))this.selectedBubble=null;
   await this.save();this.notify('round-deleted');this.notify('draft');new Notice('已删除本轮提问与回答');
